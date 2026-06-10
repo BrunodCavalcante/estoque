@@ -1,0 +1,29 @@
+AJUSTES REALIZADOS
+
+1. Relatório / impressão em PDF
+- A impressão agora usa layout HTML profissional, com tabela, margens A4 e quebra automática de texto.
+- Isso evita que colunas e textos longos fiquem cortados ou desconfigurados ao salvar/imprimir em PDF.
+
+2. Edição de retirada
+- Na tela Histórico foi adicionada a opção "Editar retirada selecionada".
+- Também é possível dar duplo clique em uma retirada para editar.
+- A edição permite alterar:
+  * quem retirou;
+  * produto retirado;
+  * quantidade retirada.
+- Antes de editar, o sistema solicita a senha de administrador já configurada: apae2235.
+- Ao salvar, o estoque é recalculado automaticamente:
+  * devolve a quantidade da retirada antiga;
+  * baixa a nova quantidade do produto selecionado;
+  * impede alteração se não houver estoque suficiente.
+- A alteração fica registrada no log do sistema.
+
+COMO USAR
+
+Para testar pelo código:
+1. Instale as dependências: python -m pip install -r requirements.txt
+2. Execute: python main.py
+
+Para gerar o executável no Windows:
+1. Dê dois cliques em gerar_exe.bat
+2. Abra o sistema em: dist\Controle_Estoque\Controle_Estoque.exe

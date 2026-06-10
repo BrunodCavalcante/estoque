@@ -1,0 +1,36 @@
+AJUSTES REALIZADOS - LOGIN E LOG POR USUÁRIO
+
+1. Ao abrir o sistema, agora aparece uma tela de login solicitando usuário e senha.
+
+2. Para cadastrar ou alterar usuários, abra o arquivo main.py e procure pela área:
+
+   # ============================================================
+   # USUÁRIOS DO SISTEMA
+   # ============================================================
+
+   Exemplo:
+   USUARIOS_SISTEMA = {
+       "admin": "apae2235",
+       "estoque": "1234",
+   }
+
+   Para adicionar outro usuário:
+   USUARIOS_SISTEMA = {
+       "admin": "apae2235",
+       "estoque": "1234",
+       "maria": "senha123",
+   }
+
+3. Sempre que o sistema for fechado, o usuário será deslogado automaticamente.
+   Ao abrir novamente, será necessário fazer login de novo.
+
+4. O log do sistema agora registra qual usuário fez cada alteração.
+   No relatório de logs aparece:
+   Data e horário | Usuário | Alteração | Detalhes
+
+5. Usuários padrão já cadastrados:
+   Usuário: admin
+   Senha: apae2235
+
+   Usuário: estoque
+   Senha: 1234
