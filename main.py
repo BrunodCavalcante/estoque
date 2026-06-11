@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QDate, QMarginsF
-from PyQt6.QtGui import QAction, QFont, QIntValidator, QPageLayout, QPageSize, QTextDocument
+from PyQt6.QtGui import QAction, QFont, QIcon, QIntValidator, QPageLayout, QPageSize, QTextDocument
 from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
 from PyQt6.QtWidgets import (
     QApplication, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QFileDialog,
@@ -30,6 +30,14 @@ APP_DIR = caminho_app()
 DB_PATH = APP_DIR / "estoque.db"
 SENHA_ADMIN = "apae2235"
 
+APP_ICON_PATH = APP_DIR / "app_icon.ico"
+
+def aplicar_icone_janela(widget):
+    """Aplica o ícone oficial do sistema na janela, se o arquivo existir."""
+    if APP_ICON_PATH.exists():
+        widget.setWindowIcon(QIcon(str(APP_ICON_PATH)))
+
+
 # ============================================================
 # USUÁRIOS DO SISTEMA
 # ============================================================
@@ -45,11 +53,12 @@ SENHA_ADMIN = "apae2235"
 # - Sempre mantenha vírgula no final de cada linha, exceto se for a última.
 # - Ao fechar o sistema, o usuário é deslogado automaticamente.
 USUARIOS_SISTEMA = {
-    "admin": "apae2235",
-    "apae": "apae22",
-    "divina": "diva55",
-    "bruna": "bruna12",
-    "gabriela": "gabi87",
+     "admin": "apae2235",
+     "apae": "apae22",
+     "divina": "diva55",
+     "bruna": "bruna12",
+     "gabriela": "gabi87",
+     "bruno": "1",
 }
 
 USUARIO_LOGADO_ATUAL = "Não identificado"
@@ -113,6 +122,9 @@ class Database:
         colunas = [r[1] for r in cur.execute("PRAGMA table_info(produtos)").fetchall()]
         if "quantidade_minima" not in colunas:
             cur.execute("ALTER TABLE produtos ADD COLUMN quantidade_minima INTEGER DEFAULT 0")
+        colunas_mov = [r[1] for r in cur.execute("PRAGMA table_info(movimentacoes)").fetchall()]
+        if "usuario" not in colunas_mov:
+            cur.execute("ALTER TABLE movimentacoes ADD COLUMN usuario TEXT DEFAULT 'Não registrado'")
         colunas_logs = [r[1] for r in cur.execute("PRAGMA table_info(logs_sistema)").fetchall()]
         if "usuario" not in colunas_logs:
             cur.execute("ALTER TABLE logs_sistema ADD COLUMN usuario TEXT DEFAULT 'Não registrado'")
@@ -161,6 +173,7 @@ class LoginDialog(QDialog):
         super().__init__()
         self.usuario_logado = None
         self.setWindowTitle("Login - Controle de Estoque")
+        aplicar_icone_janela(self)
         self.setModal(True)
         self.setMinimumWidth(380)
 
@@ -246,12 +259,42 @@ class MainWindow(QMainWindow):
         self.pessoa_edit_id = None
         self.retirada_atual = []
         self.historico = []
+        self.relatorio_html = ""
+        self.relatorio_orientacao = "portrait"
         self.indice_pagina_retirada = None
         self.setWindowTitle("Controle de Estoque")
-        self.resize(1400, 900)
+        aplicar_icone_janela(self)
+        self.ajustar_tamanho_inicial_janela()
         self.build_ui()
         self.apply_style()
         self.refresh_all()
+
+    def ajustar_tamanho_inicial_janela(self):
+        """Ajusta a janela para caber no monitor ao abrir o sistema.
+
+        Altere apenas os valores abaixo se quiser mudar o tamanho padrão:
+        - LARGURA_IDEAL
+        - ALTURA_IDEAL
+        - MARGEM_MONITOR
+        """
+        LARGURA_IDEAL = 1280
+        ALTURA_IDEAL = 780
+        MARGEM_MONITOR = 80
+
+        tela = QApplication.primaryScreen()
+        if tela:
+            area = tela.availableGeometry()
+            largura = min(LARGURA_IDEAL, max(900, area.width() - MARGEM_MONITOR))
+            altura = min(ALTURA_IDEAL, max(620, area.height() - MARGEM_MONITOR))
+            self.resize(largura, altura)
+            self.setMinimumSize(900, 620)
+
+            x = area.x() + (area.width() - largura) // 2
+            y = area.y() + (area.height() - altura) // 2
+            self.move(max(area.x(), x), max(area.y(), y))
+        else:
+            self.resize(LARGURA_IDEAL, ALTURA_IDEAL)
+            self.setMinimumSize(900, 620)
 
     def build_ui(self):
         root = QWidget()
@@ -309,20 +352,89 @@ class MainWindow(QMainWindow):
         return label
 
     def page_dashboard(self):
-        w = QWidget(); layout = QVBoxLayout(w); layout.setContentsMargins(30,30,30,30)
-        layout.addWidget(self.title("Dashboard"))
-        cards = QHBoxLayout()
-        self.card_produtos = self.card("Total Produtos", "0")
-        self.card_itens = self.card("Itens em Estoque", "0")
-        cards.addWidget(self.card_produtos); cards.addWidget(self.card_itens); cards.addStretch()
-        layout.addLayout(cards); layout.addStretch()
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setSpacing(16)
+
+        header = QHBoxLayout()
+        header.addWidget(self.title("Dashboard"))
+        header.addStretch()
+        self.dashboard_usuario = QLabel(f"Usuário logado: {self.usuario_logado}")
+        self.dashboard_usuario.setObjectName("dashboardUser")
+        header.addWidget(self.dashboard_usuario)
+        layout.addLayout(header)
+
+        cards = QGridLayout()
+        cards.setHorizontalSpacing(14)
+        cards.setVerticalSpacing(14)
+        self.card_produtos = self.card("Produtos cadastrados", "0", "Total de itens diferentes no sistema")
+        self.card_itens = self.card("Itens em estoque", "0", "Soma de todas as quantidades disponíveis")
+        self.card_baixo = self.card("Estoque baixo", "0", "Produtos abaixo ou iguais à quantidade mínima")
+        self.card_saidas = self.card("Saídas hoje", "0", "Quantidade total retirada na data atual")
+        self.card_entradas = self.card("Entradas hoje", "0", "Quantidade total adicionada na data atual")
+        self.card_movs = self.card("Movimentações hoje", "0", "Entradas e saídas registradas hoje")
+        cards.addWidget(self.card_produtos, 0, 0)
+        cards.addWidget(self.card_itens, 0, 1)
+        cards.addWidget(self.card_baixo, 0, 2)
+        cards.addWidget(self.card_saidas, 1, 0)
+        cards.addWidget(self.card_entradas, 1, 1)
+        cards.addWidget(self.card_movs, 1, 2)
+        layout.addLayout(cards)
+
+        corpo = QGridLayout()
+        corpo.setHorizontalSpacing(16)
+        corpo.setVerticalSpacing(16)
+
+        box_alertas = QGroupBox("Produtos que precisam de atenção")
+        alertas_layout = QVBoxLayout(box_alertas)
+        self.tabela_dash_alertas = Table(["Produto", "Categoria", "Estoque", "Mínimo", "Status"])
+        self.tabela_dash_alertas.setMinimumHeight(230)
+        alertas_layout.addWidget(self.tabela_dash_alertas)
+        corpo.addWidget(box_alertas, 0, 0, 1, 2)
+
+        box_recentes = QGroupBox("Últimas movimentações")
+        recentes_layout = QVBoxLayout(box_recentes)
+        self.tabela_dash_recentes = Table(["Tipo", "Produto", "Pessoa", "Qtd.", "Usuário", "Data"])
+        self.tabela_dash_recentes.setMinimumHeight(230)
+        recentes_layout.addWidget(self.tabela_dash_recentes)
+        corpo.addWidget(box_recentes, 0, 2, 1, 2)
+
+        box_categorias = QGroupBox("Resumo por categoria")
+        cat_layout = QVBoxLayout(box_categorias)
+        self.tabela_dash_categorias = Table(["Categoria", "Produtos", "Itens em estoque"])
+        self.tabela_dash_categorias.setMinimumHeight(210)
+        cat_layout.addWidget(self.tabela_dash_categorias)
+        corpo.addWidget(box_categorias, 1, 0, 1, 2)
+
+        box_info = QGroupBox("Resumo operacional")
+        info_layout = QVBoxLayout(box_info)
+        self.dashboard_resumo = QLabel("Carregando informações do estoque...")
+        self.dashboard_resumo.setObjectName("dashboardResumo")
+        self.dashboard_resumo.setWordWrap(True)
+        info_layout.addWidget(self.dashboard_resumo)
+        info_layout.addStretch()
+        corpo.addWidget(box_info, 1, 2, 1, 2)
+
+        layout.addLayout(corpo)
         return w
 
-    def card(self, title, value):
-        box = QFrame(); box.setObjectName("card"); lay = QVBoxLayout(box)
-        l1 = QLabel(title); l1.setObjectName("cardTitle")
-        l2 = QLabel(value); l2.setObjectName("cardValue")
-        lay.addWidget(l1); lay.addWidget(l2)
+    def card(self, title, value, subtitle=""):
+        box = QFrame()
+        box.setObjectName("card")
+        lay = QVBoxLayout(box)
+        lay.setContentsMargins(18, 16, 18, 16)
+        lay.setSpacing(6)
+        l1 = QLabel(title)
+        l1.setObjectName("cardTitle")
+        l2 = QLabel(value)
+        l2.setObjectName("cardValue")
+        l3 = QLabel(subtitle)
+        l3.setObjectName("cardSubtitle")
+        l3.setWordWrap(True)
+        lay.addWidget(l1)
+        lay.addWidget(l2)
+        lay.addWidget(l3)
         return box
 
     def page_produtos(self):
@@ -465,7 +577,7 @@ class MainWindow(QMainWindow):
         return rows[0].row() if rows else -1
 
     def refresh_all(self):
-        self.carregar_produtos(); self.carregar_pessoas(); self.carregar_historico(); self.cancelar_produto(); self.cancelar_pessoa()
+        self.carregar_produtos(); self.carregar_pessoas(); self.carregar_historico(); self.atualizar_dashboard(); self.cancelar_produto(); self.cancelar_pessoa()
 
     def carregar_produtos(self):
         self.produtos = self.db.rows("SELECT * FROM produtos ORDER BY nome")
@@ -489,6 +601,74 @@ class MainWindow(QMainWindow):
     def carregar_historico(self):
         self.historico = self.db.rows("SELECT * FROM movimentacoes ORDER BY id DESC")
         self.tabela_historico.set_data([[h['tipo'], h['produto'], h['pessoa'], h['quantidade'], h['data']] for h in self.historico])
+        self.atualizar_dashboard()
+
+    def atualizar_dashboard(self):
+        if not hasattr(self, "card_produtos"):
+            return
+
+        produtos = self.produtos or []
+        historico = self.historico or []
+        hoje_iso = data_iso_hoje()
+
+        total_produtos = len(produtos)
+        total_itens = sum(int(p.get('quantidade') or 0) for p in produtos)
+        baixo_estoque = []
+        sem_estoque = 0
+        for p in produtos:
+            qtd = int(p.get('quantidade') or 0)
+            minimo = int(p.get('quantidade_minima') or 0)
+            if qtd <= 0:
+                sem_estoque += 1
+            if minimo > 0 and qtd <= minimo:
+                status = "SEM ESTOQUE" if qtd <= 0 else "BAIXO"
+                baixo_estoque.append([p.get('nome',''), p.get('categoria',''), qtd, minimo, status])
+
+        movs_hoje = []
+        for h in historico:
+            data_iso = parse_data_ptbr(h.get('data'))
+            if data_iso == hoje_iso:
+                movs_hoje.append(h)
+        saidas_hoje = sum(int(h.get('quantidade') or 0) for h in movs_hoje if str(h.get('tipo','')).upper() == 'RETIRADA')
+        entradas_hoje = sum(int(h.get('quantidade') or 0) for h in movs_hoje if str(h.get('tipo','')).upper() == 'ENTRADA')
+
+        self.card_produtos.findChildren(QLabel)[1].setText(str(total_produtos))
+        self.card_itens.findChildren(QLabel)[1].setText(str(total_itens))
+        self.card_baixo.findChildren(QLabel)[1].setText(str(len(baixo_estoque)))
+        self.card_saidas.findChildren(QLabel)[1].setText(str(saidas_hoje))
+        self.card_entradas.findChildren(QLabel)[1].setText(str(entradas_hoje))
+        self.card_movs.findChildren(QLabel)[1].setText(str(len(movs_hoje)))
+
+        baixo_estoque.sort(key=lambda x: (int(x[2]), str(x[0]).lower()))
+        self.tabela_dash_alertas.set_data(baixo_estoque[:12])
+
+        recentes = []
+        for h in historico[:12]:
+            recentes.append([
+                h.get('tipo',''), h.get('produto',''), h.get('pessoa',''),
+                h.get('quantidade',''), h.get('usuario') or 'Não registrado', h.get('data','')
+            ])
+        self.tabela_dash_recentes.set_data(recentes)
+
+        categorias = {}
+        for p in produtos:
+            cat = str(p.get('categoria') or 'Sem categoria')
+            if cat not in categorias:
+                categorias[cat] = {'produtos': 0, 'itens': 0}
+            categorias[cat]['produtos'] += 1
+            categorias[cat]['itens'] += int(p.get('quantidade') or 0)
+        cat_rows = [[cat, dados['produtos'], dados['itens']] for cat, dados in sorted(categorias.items(), key=lambda x: x[0].lower())]
+        self.tabela_dash_categorias.set_data(cat_rows)
+
+        if total_produtos == 0:
+            resumo = "Nenhum produto cadastrado ainda. Cadastre produtos para liberar os indicadores da dashboard."
+        else:
+            resumo = (
+                f"Estoque monitorado com {total_produtos} produto(s) cadastrado(s) e {total_itens} item(ns) disponíveis. "
+                f"Existem {len(baixo_estoque)} produto(s) em atenção, sendo {sem_estoque} sem estoque. "
+                f"Hoje foram registradas {len(movs_hoje)} movimentação(ões): {entradas_hoje} item(ns) em entrada e {saidas_hoje} item(ns) em saída."
+            )
+        self.dashboard_resumo.setText(resumo)
 
     def salvar_produto(self):
         nome, cat = self.prod_nome.text().strip(), self.prod_categoria.text().strip()
@@ -575,7 +755,7 @@ class MainWindow(QMainWindow):
         if not item: return self.erro("Produto não encontrado.")
         if int(item['quantidade'] or 0) < qtd: return self.erro("Estoque insuficiente.")
         data_hora = agora_ptbr()
-        cur = self.db.conn.cursor(); cur.execute("UPDATE produtos SET quantidade=quantidade-? WHERE nome=?", (qtd, produto)); cur.execute("INSERT INTO movimentacoes (tipo, produto, pessoa, quantidade, data) VALUES (?, ?, ?, ?, ?)", ("RETIRADA", produto, pessoa, qtd, data_hora)); self.db.conn.commit()
+        cur = self.db.conn.cursor(); cur.execute("UPDATE produtos SET quantidade=quantidade-? WHERE nome=?", (qtd, produto)); cur.execute("INSERT INTO movimentacoes (tipo, produto, pessoa, quantidade, data, usuario) VALUES (?, ?, ?, ?, ?, ?)", ("RETIRADA", produto, pessoa, qtd, data_hora, self.usuario_logado)); self.db.conn.commit()
         self.db.log("Retirada de produto", f"Produto: {produto} | Pessoa: {pessoa} | Quantidade: {qtd}")
         self.retirada_atual.append({"horario": data_hora, "produto": produto, "pessoa": pessoa, "quantidade": qtd})
         self.atualizar_relatorio_retirada_atual()
@@ -683,40 +863,134 @@ class MainWindow(QMainWindow):
     def gerar_relatorio_produtos(self):
         produtos = self.db.rows("SELECT * FROM produtos ORDER BY nome")
         idx = self.rel_ordem.currentIndex()
-        if idx == 1: produtos.sort(key=lambda p: int(p['quantidade'] or 0))
-        elif idx == 2: produtos.sort(key=lambda p: int(p['quantidade'] or 0), reverse=True)
-        else: produtos.sort(key=lambda p: str(p['nome']).lower())
+        if idx == 1:
+            produtos.sort(key=lambda p: int(p['quantidade'] or 0))
+        elif idx == 2:
+            produtos.sort(key=lambda p: int(p['quantidade'] or 0), reverse=True)
+        else:
+            produtos.sort(key=lambda p: str(p['nome']).lower())
+
         total = sum(int(p['quantidade'] or 0) for p in produtos)
-        texto = f"Relatório de produtos cadastrados\nGerado em: {agora_ptbr()}\nTotal de produtos: {len(produtos)} | Total de itens em estoque: {total}\nOrdenação: {self.rel_ordem.currentText()}\n\n"
-        texto += "Produto | Categoria | Quantidade atual | Qtd. mínima / média mensal\n"
-        texto += "-" * 90 + "\n"
-        texto += "\n".join(f"{p['nome']} | {p['categoria']} | {p['quantidade']} | {p.get('quantidade_minima',0) or 0}" for p in produtos) or "Nenhum produto cadastrado."
+        linhas = [[p['nome'], p['categoria'], p['quantidade'], p.get('quantidade_minima', 0) or 0] for p in produtos]
+
+        texto = (
+            f"Relatório de produtos cadastrados\n"
+            f"Gerado em: {agora_ptbr()}\n"
+            f"Total de produtos: {len(produtos)} | Total de itens em estoque: {total}\n"
+            f"Ordenação: {self.rel_ordem.currentText()}\n\n"
+            "Produto | Categoria | Quantidade atual | Qtd. mínima / média mensal\n"
+            + "-" * 90 + "\n"
+            + ("\n".join(f"{p['nome']} | {p['categoria']} | {p['quantidade']} | {p.get('quantidade_minima',0) or 0}" for p in produtos) or "Nenhum produto cadastrado.")
+        )
         self.relatorio_texto.setPlainText(texto)
+        self.relatorio_orientacao = "portrait"
+        self.relatorio_html = self.montar_html_relatorio(
+            titulo="Relatório de produtos cadastrados",
+            metadados=[
+                ("Gerado em", agora_ptbr()),
+                ("Total de produtos", len(produtos)),
+                ("Total de itens em estoque", total),
+                ("Ordenação", self.rel_ordem.currentText()),
+            ],
+            secoes=[{
+                "titulo": "Produtos",
+                "headers": ["Produto", "Categoria", "Quantidade atual", "Qtd. mínima / média mensal"],
+                "rows": linhas,
+                "widths": [42, 28, 15, 15],
+                "empty": "Nenhum produto cadastrado.",
+            }]
+        )
 
     def gerar_relatorio_saidas(self):
         mes = self.rel_mes.text().strip()
-        if not re.match(r"^\d{4}-\d{2}$", mes): return self.erro("Informe o mês no formato AAAA-MM.")
+        if not re.match(r"^\d{4}-\d{2}$", mes):
+            return self.erro("Informe o mês no formato AAAA-MM.")
+
         saidas = []
         for item in self.db.rows("SELECT * FROM movimentacoes ORDER BY id DESC"):
             data_iso = parse_data_ptbr(item['data'])
-            if item['tipo'] == 'RETIRADA' and data_iso and data_iso.startswith(mes): saidas.append(item)
+            if item['tipo'] == 'RETIRADA' and data_iso and data_iso.startswith(mes):
+                saidas.append(item)
+
         por_prod = {}
         total = 0
-        for s in saidas:
-            q = int(s['quantidade'] or 0); total += q; por_prod[s['produto']] = por_prod.get(s['produto'], 0) + q
-        texto = f"Relatório mensal de saída de produtos\nMês: {mes[5:7]}/{mes[:4]}\nGerado em: {agora_ptbr()}\nTotal de retiradas: {len(saidas)} | Total de itens retirados: {total}\n\nResumo por produto\n"
-        texto += "\n".join(f"{p}: {q}" for p, q in por_prod.items()) or "Nenhuma saída registrada neste mês."
-        texto += "\n\nDetalhamento das saídas\nData | Produto | Pessoa | Quantidade\n" + "-"*80 + "\n"
-        texto += "\n".join(f"{s['data']} | {s['produto']} | {s['pessoa']} | {s['quantidade']}" for s in saidas) or "Nenhuma saída registrada neste mês."
+        for s_ in saidas:
+            q = int(s_['quantidade'] or 0)
+            total += q
+            por_prod[s_['produto']] = por_prod.get(s_['produto'], 0) + q
+
+        resumo_rows = [[produto, qtd] for produto, qtd in sorted(por_prod.items(), key=lambda x: str(x[0]).lower())]
+        detalhes_rows = [[s_['data'], s_['produto'], s_['pessoa'], s_.get('usuario') or 'Não registrado', s_['quantidade']] for s_ in saidas]
+
+        texto = (
+            f"Relatório mensal de saída de produtos\n"
+            f"Mês: {mes[5:7]}/{mes[:4]}\n"
+            f"Gerado em: {agora_ptbr()}\n"
+            f"Total de retiradas: {len(saidas)} | Total de itens retirados: {total}\n\n"
+            "Resumo por produto\n"
+            + ("\n".join(f"{p}: {q}" for p, q in sorted(por_prod.items(), key=lambda x: str(x[0]).lower())) or "Nenhuma saída registrada neste mês.")
+            + "\n\nDetalhamento das saídas\nData | Produto | Pessoa | Quantidade\n"
+            + "-" * 80 + "\n"
+            + ("\n".join(f"{s_['data']} | {s_['produto']} | {s_['pessoa']} | {s_['quantidade']}" for s_ in saidas) or "Nenhuma saída registrada neste mês.")
+        )
         self.relatorio_texto.setPlainText(texto)
+        self.relatorio_orientacao = "portrait"
+        self.relatorio_html = self.montar_html_relatorio(
+            titulo="Relatório mensal de saída de produtos",
+            metadados=[
+                ("Mês", f"{mes[5:7]}/{mes[:4]}"),
+                ("Gerado em", agora_ptbr()),
+                ("Total de retiradas", len(saidas)),
+                ("Total de itens retirados", total),
+            ],
+            secoes=[
+                {
+                    "titulo": "Resumo por produto",
+                    "headers": ["Produto", "Quantidade retirada"],
+                    "rows": resumo_rows,
+                    "widths": [80, 20],
+                    "empty": "Nenhuma saída registrada neste mês.",
+                },
+                {
+                    "titulo": "Detalhamento das saídas",
+                    "headers": ["Data", "Produto", "Pessoa", "Usuário", "Quantidade"],
+                    "rows": detalhes_rows,
+                    "widths": [22, 30, 23, 15, 10],
+                    "empty": "Nenhuma saída registrada neste mês.",
+                },
+            ]
+        )
 
     def gerar_relatorio_logs(self):
         data = self.rel_data.date().toString("yyyy-MM-dd")
         logs = self.db.rows("SELECT * FROM logs_sistema WHERE data_iso=? ORDER BY id DESC", (data,))
         d, m, a = data[8:10], data[5:7], data[:4]
-        texto = f"Log do sistema - {d}/{m}/{a}\nGerado em: {agora_ptbr()}\nTotal de alterações no dia: {len(logs)}\n\nData e horário | Usuário | Alteração | Detalhes\n" + "-"*120 + "\n"
-        texto += "\n".join(f"{l['data']} | {l.get('usuario') or 'Não registrado'} | {l['acao']} | {l['detalhes']}" for l in logs) or "Nenhum registro encontrado para esta data."
+        rows = [[l['data'], l.get('usuario') or 'Não registrado', l['acao'], l['detalhes']] for l in logs]
+
+        texto = (
+            f"Log do sistema - {d}/{m}/{a}\n"
+            f"Gerado em: {agora_ptbr()}\n"
+            f"Total de alterações no dia: {len(logs)}\n\n"
+            "Data e horário | Usuário | Alteração | Detalhes\n"
+            + "-" * 120 + "\n"
+            + ("\n".join(f"{l['data']} | {l.get('usuario') or 'Não registrado'} | {l['acao']} | {l['detalhes']}" for l in logs) or "Nenhum registro encontrado para esta data.")
+        )
         self.relatorio_texto.setPlainText(texto)
+        self.relatorio_orientacao = "landscape"
+        self.relatorio_html = self.montar_html_relatorio(
+            titulo=f"Log do sistema - {d}/{m}/{a}",
+            metadados=[
+                ("Gerado em", agora_ptbr()),
+                ("Total de alterações no dia", len(logs)),
+            ],
+            secoes=[{
+                "titulo": "Alterações registradas",
+                "headers": ["Data e horário", "Usuário", "Alteração", "Detalhes"],
+                "rows": rows,
+                "widths": [20, 16, 22, 42],
+                "empty": "Nenhum registro encontrado para esta data.",
+            }]
+        )
 
     def imprimir_relatorio(self):
         texto = self.relatorio_texto.toPlainText().strip()
@@ -725,66 +999,74 @@ class MainWindow(QMainWindow):
 
         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
         printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
-        printer.setPageMargins(QMarginsF(10, 10, 10, 10), QPageLayout.Unit.Millimeter)
+        if self.relatorio_orientacao == "landscape":
+            printer.setPageOrientation(QPageLayout.Orientation.Landscape)
+        else:
+            printer.setPageOrientation(QPageLayout.Orientation.Portrait)
+        printer.setPageMargins(QMarginsF(8, 8, 8, 8), QPageLayout.Unit.Millimeter)
 
         dialog = QPrintDialog(printer, self)
         if dialog.exec():
             documento = QTextDocument()
-            documento.setDefaultFont(QFont("Arial", 9))
-            documento.setHtml(self.html_relatorio_para_impressao(texto))
+            documento.setDefaultFont(QFont("Arial", 8))
+            documento.setHtml(self.relatorio_html or self.html_relatorio_para_impressao(texto))
             documento.setPageSize(printer.pageRect(QPrinter.Unit.Point).size())
             documento.print(printer)
 
-    def html_relatorio_para_impressao(self, texto):
-        linhas = texto.splitlines()
+    def montar_html_relatorio(self, titulo, metadados, secoes):
+        """Monta o HTML do PDF diretamente a partir dos dados do relatório.
+        Isso evita bugs de alinhamento causados por tentar imprimir texto com barras |.
+        """
+        def esc(valor):
+            return html.escape(str(valor if valor is not None else ""))
+
         partes = [
             "<html><head><meta charset='utf-8'><style>",
-            "body{font-family:Arial,Helvetica,sans-serif;font-size:9pt;color:#111;}",
-            "h1{font-size:15pt;margin:0 0 10px 0;color:#1d4d2f;}",
-            "p{margin:3px 0;line-height:1.35;}",
-            ".secao{font-weight:bold;margin-top:12px;color:#1d4d2f;}",
-            "table{width:100%;border-collapse:collapse;table-layout:fixed;margin:8px 0 12px 0;}",
-            "th{background:#e9f2ec;font-weight:bold;}",
-            "th,td{border:1px solid #cfd8d3;padding:5px;vertical-align:top;word-wrap:break-word;}",
-            "</style></head><body>"
+            "body{font-family:Arial,Helvetica,sans-serif;font-size:8pt;color:#111;margin:0;}",
+            "h1{font-size:15pt;margin:0 0 8px 0;color:#1d4d2f;font-weight:bold;}",
+            "h2{font-size:10pt;margin:12px 0 5px 0;color:#1d4d2f;font-weight:bold;}",
+            ".meta{width:100%;border-collapse:collapse;margin:0 0 8px 0;}",
+            ".meta td{border:none;padding:2px 4px;font-size:8pt;vertical-align:top;}",
+            ".meta td:first-child{font-weight:bold;width:28%;color:#333;}",
+            "table.dados{width:100%;border-collapse:collapse;table-layout:fixed;margin:4px 0 10px 0;}",
+            "thead{display:table-header-group;}",
+            "tr{page-break-inside:avoid;}",
+            "th{background:#e9f2ec;color:#111;font-weight:bold;}",
+            "th,td{border:1px solid #c8d2cc;padding:3px 4px;vertical-align:top;}",
+            "td{font-size:7.5pt;line-height:1.2;}",
+            ".vazio{font-style:italic;color:#555;text-align:center;padding:8px;}",
+            "</style></head><body>",
+            f"<h1>{esc(titulo)}</h1>",
+            "<table class='meta'><tbody>",
         ]
-        i = 0
-        titulo_adicionado = False
-        while i < len(linhas):
-            linha = linhas[i].strip()
-            if not linha:
-                i += 1
-                continue
-            proxima = linhas[i + 1].strip() if i + 1 < len(linhas) else ""
-            if " | " in linha and proxima and set(proxima.replace("|", "").replace(" ", "")) <= {"-"}:
-                cabecalho = [html.escape(c.strip()) for c in linha.split("|")]
-                i += 2
-                rows = []
-                while i < len(linhas) and " | " in linhas[i]:
-                    rows.append([html.escape(c.strip()) for c in linhas[i].split("|")])
-                    i += 1
-                partes.append("<table><thead><tr>" + "".join(f"<th>{c}</th>" for c in cabecalho) + "</tr></thead><tbody>")
+        for chave, valor in metadados:
+            partes.append(f"<tr><td>{esc(chave)}</td><td>{esc(valor)}</td></tr>")
+        partes.append("</tbody></table>")
+
+        for secao in secoes:
+            partes.append(f"<h2>{esc(secao.get('titulo', ''))}</h2>")
+            headers = secao.get('headers', [])
+            rows = secao.get('rows', [])
+            widths = secao.get('widths') or []
+            partes.append("<table class='dados'>")
+            if widths and len(widths) == len(headers):
+                partes.append("<colgroup>" + "".join(f"<col style='width:{int(w)}%;'>" for w in widths) + "</colgroup>")
+            partes.append("<thead><tr>" + "".join(f"<th>{esc(h)}</th>" for h in headers) + "</tr></thead><tbody>")
+            if rows:
                 for row in rows:
-                    while len(row) < len(cabecalho):
+                    row = list(row)
+                    while len(row) < len(headers):
                         row.append("")
-                    partes.append("<tr>" + "".join(f"<td>{c}</td>" for c in row[:len(cabecalho)]) + "</tr>")
-                if not rows:
-                    partes.append(f"<tr><td colspan='{len(cabecalho)}'>Nenhum registro encontrado.</td></tr>")
-                partes.append("</tbody></table>")
-                continue
-            if set(linha.replace(" ", "")) <= {"-"}:
-                i += 1
-                continue
-            if not titulo_adicionado:
-                partes.append(f"<h1>{html.escape(linha)}</h1>")
-                titulo_adicionado = True
-            elif i + 1 < len(linhas) and linhas[i + 1].strip() and " | " not in linhas[i + 1] and not linhas[i + 1].startswith("-") and not ":" in linha and len(linha) < 60:
-                partes.append(f"<p class='secao'>{html.escape(linha)}</p>")
+                    partes.append("<tr>" + "".join(f"<td>{esc(c)}</td>" for c in row[:len(headers)]) + "</tr>")
             else:
-                partes.append(f"<p>{html.escape(linha)}</p>")
-            i += 1
+                partes.append(f"<tr><td class='vazio' colspan='{max(1, len(headers))}'>{esc(secao.get('empty', 'Nenhum registro encontrado.'))}</td></tr>")
+            partes.append("</tbody></table>")
         partes.append("</body></html>")
         return "".join(partes)
+
+    def html_relatorio_para_impressao(self, texto):
+        # Fallback simples para relatórios antigos ou texto manual.
+        return "<html><body style='font-family:Arial;font-size:8pt;white-space:pre-wrap;'>" + html.escape(texto) + "</body></html>"
 
     def gerar_backup(self):
         backup = {
@@ -810,7 +1092,7 @@ class MainWindow(QMainWindow):
             cur = self.db.conn.cursor(); cur.execute("DELETE FROM logs_sistema"); cur.execute("DELETE FROM movimentacoes"); cur.execute("DELETE FROM produtos"); cur.execute("DELETE FROM pessoas")
             for p in backup['produtos']: cur.execute("INSERT INTO produtos (id,nome,categoria,quantidade,quantidade_minima) VALUES (?,?,?,?,?)", (int(p.get('id') or 0), str(p.get('nome','')), str(p.get('categoria','')), int(p.get('quantidade') or 0), int(p.get('quantidade_minima') or p.get('quantidadeMinima') or 0)))
             for p in backup['pessoas']: cur.execute("INSERT INTO pessoas (id,nome,setor) VALUES (?,?,?)", (int(p.get('id') or 0), str(p.get('nome','')), str(p.get('setor',''))))
-            for m in backup['movimentacoes']: cur.execute("INSERT INTO movimentacoes (id,tipo,produto,pessoa,quantidade,data) VALUES (?,?,?,?,?,?)", (int(m.get('id') or 0), str(m.get('tipo','')), str(m.get('produto','')), str(m.get('pessoa','')), int(m.get('quantidade') or 0), str(m.get('data',''))))
+            for m in backup['movimentacoes']: cur.execute("INSERT INTO movimentacoes (id,tipo,produto,pessoa,quantidade,data,usuario) VALUES (?,?,?,?,?,?,?)", (int(m.get('id') or 0), str(m.get('tipo','')), str(m.get('produto','')), str(m.get('pessoa','')), int(m.get('quantidade') or 0), str(m.get('data','')), str(m.get('usuario') or 'Não registrado')))
             for l in backup.get('logs_sistema', []): cur.execute("INSERT INTO logs_sistema (id,acao,detalhes,data,data_iso,usuario) VALUES (?,?,?,?,?,?)", (int(l.get('id') or 0), str(l.get('acao','')), str(l.get('detalhes','')), str(l.get('data','')), str(l.get('data_iso') or parse_data_ptbr(l.get('data')) or data_iso_hoje()), str(l.get('usuario') or 'Não registrado')))
             self.db.conn.commit(); self.db.log("Backup importado", f"Produtos: {len(backup['produtos'])} | Pessoas: {len(backup['pessoas'])} | Movimentações: {len(backup['movimentacoes'])}")
             self.refresh_all(); self.info("Backup importado com sucesso.")
@@ -842,9 +1124,12 @@ class MainWindow(QMainWindow):
         QPushButton#danger{background:#b3261e;}
         QTableWidget{background:white;border:1px solid #ddd;border-radius:8px;gridline-color:#ddd;}
         QHeaderView::section{background:#f2f4f7;border:1px solid #ddd;padding:8px;font-weight:bold;}
-        #card{background:white;border-radius:15px;min-width:250px;max-width:250px;padding:20px;border:1px solid #e5e5e5;}
-        #cardTitle{background:transparent;font-size:18px;font-weight:bold;}
-        #cardValue{background:transparent;font-size:28px;font-weight:bold;}
+        #card{background:white;border-radius:16px;min-width:260px;padding:18px;border:1px solid #dde5df;}
+        #cardTitle{background:transparent;font-size:15px;font-weight:bold;color:#31513d;}
+        #cardValue{background:transparent;font-size:34px;font-weight:bold;color:#1d4d2f;}
+        #cardSubtitle{background:transparent;font-size:11px;color:#65756b;}
+        #dashboardUser{background:white;color:#1d4d2f;border:1px solid #dde5df;border-radius:12px;padding:8px 14px;font-size:13px;font-weight:bold;}
+        #dashboardResumo{background:transparent;color:#26352b;font-size:15px;line-height:150%;padding:8px;}
         QTextEdit{background:white;border:1px solid #ddd;border-radius:8px;padding:10px;font-family:Consolas,monospace;}
         QMessageBox{background:#ffffff;color:#111111;}
         QMessageBox QLabel{background:transparent;color:#111111;font-size:13px;font-weight:normal;}
@@ -859,6 +1144,8 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
+    if APP_ICON_PATH.exists():
+        app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
     login = LoginDialog()
     if login.exec() != QDialog.DialogCode.Accepted:
         sys.exit(0)

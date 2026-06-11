@@ -1,0 +1,7 @@
+AJUSTE REALIZADO NOS RELATÓRIOS
+
+- A geração do PDF foi refeita para usar HTML próprio do relatório, em vez de tentar imprimir o texto com separadores.
+- Produtos, Saídas e Logs agora usam tabelas consistentes do início ao fim.
+- Cabeçalho da tabela é repetido corretamente quando o relatório passa para outra página.
+- O relatório de logs usa orientação paisagem para evitar cortes nos detalhes.
+- Foram mantidas as demais funcionalidades do sistema sem alteração.

@@ -30,7 +30,7 @@ del /q Controle_Estoque.spec 2>nul
 
 echo.
 echo Gerando .exe...
-python -m PyInstaller --noconfirm --clean --windowed --name "Controle_Estoque" main.py
+python -m PyInstaller --noconfirm --clean --windowed --icon "app_icon.ico" --name "Controle_Estoque" main.py
 if errorlevel 1 (
     echo Erro ao gerar o executavel.
     pause
@@ -38,6 +38,7 @@ if errorlevel 1 (
 )
 
 copy /Y estoque.db "dist\Controle_Estoque\estoque.db" >nul
+copy /Y app_icon.ico "dist\Controle_Estoque\app_icon.ico" >nul
 
 echo.
 echo ==========================================
